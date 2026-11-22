@@ -30,3 +30,57 @@ jobs:
         with:
           name: bandit-findings
           path: bandit-report.json
+
+  image_scan:
+    name: Build and Run Image Scan
+    runs-on: ubuntu-latest
+
+    # Docker Hub credentials are optional. When the repository secrets are set,
+    # the runner logs in before pulling the base image and Docker Scout can use
+    # the account for higher rate limits.
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+      IMAGE_TAG: pygoat:${{ github.sha }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to Docker Hub
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKERHUB_USERNAME }}
+          password: ${{ env.DOCKERHUB_PASSWORD }}
+
+      - name: Build Docker Image
+        run: docker build -f Dockerfile -t "$IMAGE_TAG" .
+
+      - name: Docker Scout Scan
+        uses: docker/scout-action@v1.15.1
+        with:
+          dockerhub-user: ${{ env.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ env.DOCKERHUB_PASSWORD }}
+          image: ${{ env.IMAGE_TAG }}
+          command: quickview,cves
+          only-severities: critical,high
+          sarif-file: scout-report.sarif
+          summary: true
+          write-comment: false
+          # fail the step when critical/high vulnerabilities are detected:
+          # a red pipeline is expected for this intentionally vulnerable image
+          exit-code: true
+
+      - name: Generate readable Scout report
+        if: always()
+        run: python3 .github/scripts/scout_sarif_summary.py scout-report.sarif scout-report.md
+
+      - name: Upload Docker Scout Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-scout-findings
+          path: |
+            scout-report.sarif
+            scout-report.md
