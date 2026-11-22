@@ -35,42 +35,37 @@ jobs:
     name: Build and Run Image Scan
     runs-on: ubuntu-latest
 
-    # Docker Hub credentials are optional. When the repository secrets are set,
-    # the runner logs in before pulling the base image and Docker Scout can use
-    # the account for higher rate limits.
     env:
-      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-      DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
       IMAGE_TAG: pygoat:${{ github.sha }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Log in to Docker Hub
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v3
-        with:
-          username: ${{ env.DOCKERHUB_USERNAME }}
-          password: ${{ env.DOCKERHUB_PASSWORD }}
-
       - name: Build Docker Image
         run: docker build -f Dockerfile -t "$IMAGE_TAG" .
 
-      - name: Docker Scout Scan
-        uses: docker/scout-action@v1.15.1
-        with:
-          dockerhub-user: ${{ env.DOCKERHUB_USERNAME }}
-          dockerhub-password: ${{ env.DOCKERHUB_PASSWORD }}
-          image: ${{ env.IMAGE_TAG }}
-          command: quickview,cves
-          only-severities: critical,high
-          sarif-file: scout-report.sarif
-          summary: true
-          write-comment: false
-          # fail the step when critical/high vulnerabilities are detected:
-          # a red pipeline is expected for this intentionally vulnerable image
-          exit-code: true
+      # Docker Scout can scan local images anonymously, so no Docker Hub
+      # credentials are required. Credentials are only useful for higher pull
+      # rate limits; they must be stored as GitHub Secrets (never committed).
+      - name: Install Docker Scout CLI
+        run: |
+          mkdir -p "$HOME/.docker/cli-plugins"
+          curl -fsSL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh \
+            | sh -s -- -b "$HOME/.docker/cli-plugins"
+          docker scout version
+
+      - name: Docker Scout Quickview
+        # informational: policy violations are expected for this image
+        run: docker scout quickview "local://$IMAGE_TAG" || true
+
+      - name: Docker Scout CVEs (critical, high)
+        # --exit-code makes the step fail when vulnerabilities are found:
+        # a red pipeline is expected for this intentionally vulnerable image
+        run: |
+          docker scout cves --only-severity critical,high --exit-code \
+            --format sarif --output scout-report.sarif \
+            "local://$IMAGE_TAG"
 
       - name: Generate readable Scout report
         if: always()
