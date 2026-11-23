@@ -56,24 +56,20 @@ jobs:
       - name: Build Docker Image
         run: docker build -f Dockerfile -t "$IMAGE_TAG" .
 
-      - name: Install Docker Scout CLI
-        run: |
-          mkdir -p "$HOME/.docker/cli-plugins"
-          curl -fsSL https://raw.githubusercontent.com/docker/scout-cli/main/install.sh \
-            | sh -s -- -b "$HOME/.docker/cli-plugins"
-          docker scout version
-
-      - name: Docker Scout Quickview
-        # informational: policy violations are expected for this image
-        run: docker scout quickview "local://$IMAGE_TAG" || true
-
-      - name: Docker Scout CVEs (critical, high)
-        # --exit-code makes the step fail when vulnerabilities are found:
-        # a red pipeline is expected for this intentionally vulnerable image
-        run: |
-          docker scout cves --only-severity critical,high --exit-code \
-            --format sarif --output scout-report.sarif \
-            "local://$IMAGE_TAG"
+      - name: Docker Scout Scan
+        uses: docker/scout-action@v1.15.1
+        with:
+          dockerhub-user: ${{ env.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ env.DOCKERHUB_PASSWORD }}
+          image: ${{ env.IMAGE_TAG }}
+          command: quickview,cves
+          only-severities: critical,high
+          sarif-file: scout-report.sarif
+          summary: true
+          write-comment: false
+          # fail the step when critical/high vulnerabilities are detected:
+          # a red pipeline is expected for this intentionally vulnerable image
+          exit-code: true
 
       - name: Generate readable Scout report
         if: always()
