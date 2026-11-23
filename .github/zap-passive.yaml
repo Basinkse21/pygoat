@@ -1,0 +1,39 @@
+env:
+  contexts:
+    - name: pygoat
+      urls:
+        - http://web:8000
+  parameters:
+    failOnError: true
+    failOnWarning: true
+
+jobs:
+  - type: passiveScan-config
+    parameters:
+      scanOnlyInScope: true
+  - type: requestor
+    requests:
+      - url: http://web:8000/
+        method: GET
+        responseCode: 302
+      - url: http://web:8000/login/
+        method: GET
+        responseCode: 200
+      - url: http://web:8000/register
+        method: GET
+        responseCode: 200
+  - type: passiveScan-wait
+    parameters:
+      maxDuration: 2
+  - type: report
+    parameters:
+      template: traditional-json
+      reportDir: /zap/wrk
+      reportFile: zap-report.json
+      reportTitle: PyGoat passive DAST
+  - type: report
+    parameters:
+      template: traditional-html
+      reportDir: /zap/wrk
+      reportFile: zap-report.html
+      reportTitle: PyGoat passive DAST

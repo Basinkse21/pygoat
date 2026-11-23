@@ -83,3 +83,52 @@ jobs:
           path: |
             scout-report.sarif
             scout-report.md
+
+  dast_scan:
+    name: Run OWASP ZAP Passive Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      ZAP_IMAGE: ghcr.io/zaproxy/zaproxy@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Build and start PyGoat
+        shell: bash
+        run: |
+          docker build -t pygoat-dast:${GITHUB_SHA} .
+          docker network create --internal pygoat-dast
+          docker run --detach --network pygoat-dast --network-alias web \
+            --name pygoat-dast-web pygoat-dast:${GITHUB_SHA}
+          for attempt in {1..30}; do
+            if docker exec pygoat-dast-web curl -fsS --max-time 3 http://127.0.0.1:8000/login/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs pygoat-dast-web
+          exit 1
+      - name: Run passive DAST
+        shell: bash
+        run: |
+          install -d -m 0777 zap-out
+          docker run --rm --network pygoat-dast \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/.github/zap-passive.yaml,dst=/zap/zap-passive.yaml,readonly" \
+            --mount "type=bind,src=$GITHUB_WORKSPACE/zap-out,dst=/zap/wrk" \
+            "$ZAP_IMAGE" zap.sh -cmd -silent -autorun /zap/zap-passive.yaml | tee zap-out/zap-run.log
+          test -s zap-out/zap-report.json
+          test -s zap-out/zap-report.html
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-report
+          path: zap-out/
+      - name: Remove DAST containers and network
+        if: always()
+        run: |
+          docker rm -f pygoat-dast-web || true
+          docker network rm pygoat-dast || true
